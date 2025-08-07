@@ -270,7 +270,7 @@ def main(start_seed, num_seeds=1000):
         NS = result['NS']
 
         if NS:
-            log(f"🔆 Seed {seed}: Nash Equilibrium 도달 (iteration: {iteration})")
+            log(f"🔆 Seed {seed}: Nash Equilibrium reached (iteration: {iteration})")
 
             write_result_row(csv_path, [seed, num_agents, num_tasks, density, num_edges, iteration])
 
