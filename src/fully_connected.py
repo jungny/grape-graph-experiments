@@ -7,6 +7,13 @@ import csv
 import os
 import time
 
+LOG_PATH = os.path.join("logs", "run_log.txt")
+
+def log(message):
+    tqdm.write(message)  # 터미널에 출력
+    with open(LOG_PATH, mode='a', encoding='utf-8') as f:
+        f.write(message + '\n')  # 파일에도 저장
+
 def generate_preference_relation(degree, num_tasks):
     """
     SPAO 조건 만족하는 preference relation을 무작위로 생성.
@@ -108,12 +115,19 @@ def generate_random_scenario(seed):
     # Initialize allocation: all agents start with void task (0)
     allocation = {agent: 0 for agent in range(num_agents)}
 
+    # 연결 정보 생성 (edge 기반)
+    connected = {agent: set() for agent in agents}
+    for i, j in edges:
+        connected[i].add(j)
+        connected[j].add(i)
+
     return {
         "num_agents": num_agents,
         "num_tasks": num_tasks,
         "allocation": allocation,
         "edges": edges,
         "preferences": preferences,
+        "connected": connected,
         "density": density, # for debugging
         "degrees": degrees  # for debugging
     }
@@ -123,6 +137,7 @@ def find_dissatisfied_agents(scenario):
     preferences = scenario['preferences']
     edges = scenario['edges']
     allocation = scenario['allocation']
+    connected = scenario['connected']
 
     # agent 연결 정보 만들기 (edge 기반)
     connected = {agent: set() for agent in range(num_agents)}
@@ -134,36 +149,31 @@ def find_dissatisfied_agents(scenario):
 
     for agent_id in range(num_agents):
         current_task = allocation[agent_id]
-        
+        agent_pref = preferences[agent_id]
+
         # 연결된 agent들의 task 할당 현황 조사
         task_counts = {}
         for other_id in connected[agent_id]:
             other_task = allocation[other_id]
             task_counts[other_task] = task_counts.get(other_task, 0) + 1
 
-        # agent_id가 각 task로 이동한다고 가정하여 count + 1
-        task_preferences = []
+        # 현재 utility 순위와 다른 task utility 순위 비교
+        current_key = (current_task, task_counts.get(current_task, 0) + 1)
+        try:
+            current_rank = agent_pref.index(current_key)
+        except ValueError:
+            current_rank = float('inf')  # 현재 task가 선호 리스트에 없음
+
+        # 다른 task 중 더 선호하는 task가 있으면 dissatisfied
         for task_id in range(1, scenario['num_tasks'] + 1):
-            num_participants = task_counts.get(task_id, 0)
-            task_preferences.append((task_id, num_participants + 1))
-
-        # preference relation에서 가장 왼쪽에 있는 pair 찾기
-        agent_pref = preferences[agent_id]
-        best_index = float('inf')
-        best_task = None
-
-        for task_pair in agent_pref:
+            key = (task_id, task_counts.get(task_id, 0) + 1)
             try:
-                idx = agent_pref.index(task_pair)
-                if idx < best_index:
-                    best_index = idx
-                    best_task = task_pair[0]
+                new_rank = agent_pref.index(key)
+                if new_rank < current_rank:
+                    dissatisfied_agents.add((agent_id, task_id))
+                    break  # 하나만 찾으면 되니까 바로 break
             except ValueError:
-                print(f"Warning: Task pair {task_pair} not found in agent {agent_id}'s preferences")
-                continue # task_pair가 agent_pref에 없을 경우
-
-        if best_task is not None and best_task != current_task:
-            dissatisfied_agents.add((agent_id, best_task))
+                continue  # 해당 task_key가 preference에 없으면 무시
 
     return dissatisfied_agents
 
@@ -194,20 +204,34 @@ def grape_allocation(scenario):
         if iteration > threshold:
             raise RuntimeError(f"❌ Threshold {threshold} 초과: NS 도달 실패 (iteration: {iteration})")
 
-        # 💡 특정 간격마다 진행상황 출력
+        # num_agents의 정수배마다 진행상황 출력
         if iteration > 0 and iteration % num_agents == 0:
             now = time.time()
             elapsed = now - last_report_time
             total_elapsed = now - start_time
-            tqdm.write(f"⏱️Iteration {iteration} (agent x {iteration // num_agents}) | "
-                       f"+{elapsed:.2f}s since last | total {total_elapsed:.2f}s")
+            dissatisfied_ratio = len(dissatisfied_agents) / num_agents * 100
+
+            log(
+                f"🐜 Iteration {iteration} "
+                f"(num_agents x {iteration // num_agents}) | "
+                f"dissatisfied: {dissatisfied_ratio:.1f}% | "
+                f"From last log: {elapsed:.2f}s | Total: {total_elapsed:.2f}s"
+            )
             last_report_time = now
 
         # 무작위 dissatisfied agent 선택 → best_task로 할당
         agent_id, best_task = random.choice(list(dissatisfied_agents))
         allocation[agent_id] = best_task
         iteration += 1
+        
+def write_result_row(csv_path, row):
+    write_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
 
+    with open(csv_path, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        if write_header:
+            writer.writerow(["seed", "num_agents", "num_tasks", "density", "num_edges", "iteration"])
+        writer.writerow(row)
 
 def main(start_seed, num_seeds=1000):
     print(f"Starting simulation for seeds {start_seed} to {start_seed + num_seeds - 1}")
@@ -218,7 +242,7 @@ def main(start_seed, num_seeds=1000):
 
     # tqdm 진행률 표시줄
     for i in tqdm(range(num_seeds),
-                  desc=f"🌱 Seed {start_seed} ~ {start_seed + num_seeds - 1}",
+                  desc=f"🐫 Seed {start_seed} ~ {start_seed + num_seeds - 1}",
                   unit="seed",
                   ncols=100,
                   colour='green'):
@@ -231,14 +255,14 @@ def main(start_seed, num_seeds=1000):
         density = scenario["density"]
         num_edges = len(scenario["edges"])
 
-        tqdm.write(f"🧪 Seed {seed}: {num_agents} agents, {num_tasks} tasks, "
+        log(f"🌱 Seed {seed}: {num_agents} agents, {num_tasks} tasks, "
            f"density {density * 100:.0f}%, {num_edges} edges")
 
 
         try:
             result = grape_allocation(scenario)
         except RuntimeError as e:
-            tqdm.write(f"❌ Seed {seed} 실패: {str(e)}")
+            log(f"❌ Seed {seed} 실패: {str(e)}")
             continue
 
         allocation = result['allocation']
@@ -246,11 +270,10 @@ def main(start_seed, num_seeds=1000):
         NS = result['NS']
 
         if NS:
-            tqdm.write(f"✅ Seed {seed}: Nash Equilibrium 도달 (iteration: {iteration})")
+            log(f"🔆 Seed {seed}: Nash Equilibrium 도달 (iteration: {iteration})")
 
-            with open(csv_path, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([seed, num_agents, num_tasks, density, num_edges, iteration])
+            write_result_row(csv_path, [seed, num_agents, num_tasks, density, num_edges, iteration])
+
 
 
 
