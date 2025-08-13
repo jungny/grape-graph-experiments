@@ -1,3 +1,5 @@
 logs/seed_info.csv
 requirements.txt
 logs/run_log.txt
+/_tmp_frames
+/logs

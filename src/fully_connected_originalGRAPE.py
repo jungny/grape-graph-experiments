@@ -8,7 +8,7 @@ import os
 import time
 import gc
 
-LOG_PATH = os.path.join("logs", "run_log.txt")
+LOG_PATH = os.path.join("logs", "run_log2.txt")
 
 def log(message):
     tqdm.write(message)  # 터미널에 출력
@@ -86,7 +86,7 @@ def generate_random_scenario(seed):
     
     # agent_options = [5]
     # task_options = [3]
-    agent_options = [80, 160] # 240, 320 제외
+    agent_options = [80, 160, 240, 320] # 240, 320 제외
     task_options = [5, 10, 15, 20]
     num_agents = random.choice(agent_options)
     num_tasks = random.choice(task_options)
@@ -98,8 +98,8 @@ def generate_random_scenario(seed):
     all_pairs = list(combinations(agents, 2)) # (0, 1), (0, 2), ..., (num_agents-2, num_agents-1), always (a, b) where a < b
     total_possible = len(all_pairs)
 
-    # Randomly select edges between agents
-    density = random.uniform(0.0, 1.0)
+    # all agents are fullt connected on the graph.
+    density = 1 
     num_edges = int(total_possible * density)
     edges = set(random.sample(all_pairs, num_edges))
 
@@ -207,12 +207,12 @@ def grape_allocation(scenario):
             total_elapsed = now - start_time
             dissatisfied_ratio = len(dissatisfied_agents) / num_agents * 100
 
-            # log(
-            #     f"🐜 Iteration {iteration} "
-            #     f"(num_agents x {iteration // num_agents}) | "
-            #     f"dissatisfied: {dissatisfied_ratio:.1f}% | "
-            #     f"From last log: {elapsed:.2f}s | Total: {total_elapsed:.2f}s"
-            # )
+            log(
+                f"🐜 Iteration {iteration} "
+                f"(num_agents x {iteration // num_agents}) | "
+                f"dissatisfied: {dissatisfied_ratio:.1f}% | "
+                f"From last log: {elapsed:.2f}s | Total: {total_elapsed:.2f}s"
+            )
             last_report_time = now
 
         # 무작위 dissatisfied agent 선택 → best_task로 할당
@@ -234,7 +234,7 @@ def main(start_seed, num_seeds=1000):
     print("Each seed corresponds to a task allocation scenario.\n"
           "If everything works well, each seed should reach a 🌐 Nash Stable (NS) state.\n")
 
-    csv_path = os.path.join("logs", "seed_info.csv")
+    csv_path = os.path.join("logs", "seed_info_originalGRAPE.csv")
 
     # tqdm 진행률 표시줄
     for i in tqdm(range(num_seeds),
@@ -253,8 +253,8 @@ def main(start_seed, num_seeds=1000):
         density = scenario["density"]
         num_edges = len(scenario["edges"])
 
-        # log(f"🌱 Seed {seed}: {num_agents} agents, {num_tasks} tasks, "
-        #    f"density {density * 100:.0f}%, {num_edges} edges")
+        log(f"🌱 Seed {seed}: {num_agents} agents, {num_tasks} tasks, "
+           f"density {density * 100:.0f}%, {num_edges} edges")
 
 
         try:
@@ -268,7 +268,7 @@ def main(start_seed, num_seeds=1000):
         NS = result['NS']
 
         if NS:
-            # log(f"🔆 Seed {seed}: Nash Equilibrium reached (iteration: {iteration})")
+            log(f"🔆 Seed {seed}: Nash Equilibrium reached (iteration: {iteration})")
 
             write_result_row(csv_path, [seed, num_agents, num_tasks, density, num_edges, iteration])
         
