@@ -620,15 +620,15 @@ def run_experiment(seed, visualize=False):
     """
     메인 실험 함수:
     1. 초기 Nash equilibrium까지 GRAPE 실행
-    2. 랜덤 에이전트 선택하여 preference relation 초기화
-    3. 새로운 preference로 다시 GRAPE 실행하여 iteration 수 기록
+    2. 새로운 에이전트 추가 및 초기 할당
+    3. Nash equilibrium 다시 도달 (moves 기록 or history 추적)
     """
     
     if visualize:
         # 시각화 모드: logs/newpr/seed 폴더에 결과 저장
-        save_dir = os.path.join("logs", "newpr", str(seed))
+        save_dir = os.path.join("logs", "graph_new_agent/vis", str(seed))
         ensure_dir(save_dir)
-        log_path = os.path.join(save_dir, "run_log_pr.txt")
+        log_path = os.path.join(save_dir, "run_log.txt")
     else:
         # CSV 기록 모드: logs 폴더에 로그만 저장
         log_path = LOG_PATH
@@ -636,13 +636,7 @@ def run_experiment(seed, visualize=False):
     log(f"[EXPERIMENT] seed={seed}", log_path)
     
     # 1. 초기 시나리오 생성
-    log("[EXPERIMENT] generating initial scenario...", log_path)
     scenario = generate_random_scenario(seed)
-    log(f"[EXPERIMENT] agents={scenario['num_agents']}, tasks={scenario['num_tasks']}, "
-        f"density={scenario['density']:.3f}, edges={len(scenario['edges'])}", log_path)
-
-    # 2. 초기 Nash equilibrium까지 GRAPE 실행
-    log("[EXPERIMENT] running initial GRAPE to reach Nash equilibrium...", log_path)
     initial_result = grape_allocation(scenario)
     log(f"[EXPERIMENT] Initial Nash equilibrium reached! Iterations: {initial_result['iteration']}", log_path)
 
@@ -654,8 +648,8 @@ def run_experiment(seed, visualize=False):
     # 새로운 에이전트를 위한 연결 정보 초기화
     scenario['connected'][new_agent] = set()
     
-    # 새로운 에이전트의 연결을 위한 새로운 density 생성 (0% 초과 100% 미만)
-    new_density = random.uniform(0.0, 1.0)
+    # 새로운 에이전트의 연결을 위한 새로운 density 생성 (0% 초과 100% 이하)
+    new_density = random.uniform(1e-9, 1.0)
     
     # 새로운 에이전트와 기존 에이전트들 간의 edge 생성
     for existing_agent in range(num_agents_before):
@@ -706,17 +700,28 @@ def run_experiment(seed, visualize=False):
             edge_mode='sample'
         )
 
-    # 5. 새로운 preference로 다시 GRAPE 실행 (히스토리 포함)
-    log("[EXPERIMENT] running GRAPE with new preference to count iterations...", log_path)
-    new_result = grape_allocation_with_history(
-        scenario, 
-        sample_every=1, 
-        report_every=max(100, scenario['num_agents']),
-        log_path=log_path
-    )
+        new_result = grape_allocation_with_history(
+            scenario,
+            sample_every=1,
+            report_every=max(100, scenario['num_agents']),
+            log_path=log_path
+        )
+        new_iterations = new_result['iteration']
+        log(f"[EXPERIMENT] New Nash equilibrium reached! Iterations: {new_iterations}", log_path)
+    else:
+
+        # 5. 새 Nash equilibrium 도달 (moves 기록 포함)
+        log("[EXPERIMENT] running GRAPE with new preference to count iterations...", log_path)
+        new_result = grape_allocation_with_moves(
+            scenario,
+            seed,
+            sample_every=1,
+            report_every=max(100, scenario['num_agents']),
+            log_path=log_path
+        )
     
-    new_iterations = new_result['iteration']
-    log(f"[EXPERIMENT] New Nash equilibrium reached! Iterations: {new_iterations}", log_path)
+        new_iterations = new_result['iteration']
+        log(f"[EXPERIMENT] New Nash equilibrium reached! Iterations: {new_iterations}", log_path)
 
     # 6. 시각화 모드인 경우 결과 시각화 및 GIF 생성
     if visualize:
@@ -749,10 +754,12 @@ def run_experiment(seed, visualize=False):
             "seed": seed,
             "num_agents": scenario['num_agents'],
             "num_tasks": scenario['num_tasks'],
-            "changed_agent": random_agent,
+            "density": scenario['density'],
             "initial_iterations": initial_result['iteration'],
-            "new_iterations": new_iterations,
-            "visualization_dir": save_dir
+            "new_iterations": new_result['iteration'],
+            "total_moves": None,
+            "pushed_moves": None,
+            "pulled_moves": None
         }
     else:
         # CSV 기록 모드
@@ -761,9 +768,11 @@ def run_experiment(seed, visualize=False):
             "num_agents": scenario['num_agents'],
             "num_tasks": scenario['num_tasks'],
             "density": scenario['density'],
-            "changed_agent": random_agent,
             "initial_iterations": initial_result['iteration'],
-            "new_iterations": new_iterations
+            "new_iterations": new_result['iteration'],
+            "total_moves": new_result['total_moves'],
+            "pushed_moves": new_result['pushed_moves'],
+            "pulled_moves": new_result['pulled_moves']
         }
 
 def write_result_row(csv_path, row):
