@@ -141,7 +141,7 @@ def generate_random_scenario(seed):
         "degrees": degrees  # for debugging
     }
 
-def find_dissatisfied_agents(scenario):
+def find_dissatisfied_agents(scenario, last_moved_agent=None, last_from_task=None, last_to_task=None, cause_map=None):
     num_agents  = scenario['num_agents']
     preferences = scenario['preferences']
     allocation  = scenario['allocation']
@@ -178,6 +178,15 @@ def find_dissatisfied_agents(scenario):
 
         if best_task is not None:
             dissatisfied_agents.add((agent_id, best_task))
+            
+            # Track cause agents if cause_map is provided
+            if cause_map is not None and last_moved_agent is not None:
+                # If the agent's current task == last_to_task: This agent is being pushed by last_moved_agent
+                if current_task == last_to_task:
+                    cause_map[agent_id] = last_moved_agent
+                # If the agent's best_task == last_from_task: This agent is being pulled by last_moved_agent
+                elif best_task == last_from_task:
+                    cause_map[agent_id] = last_moved_agent
 
     return dissatisfied_agents
 
@@ -280,10 +289,22 @@ def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100
     pushed_moves = 0
     pulled_moves = 0
 
+    # Initialize cause tracking
+    scenario['cause_map'] = {}
+    last_moved_agent = None
+    last_from_task = None
+    last_to_task = None
+
     last_report_time = time.time()
 
     while True:
-        dissatisfied_agents = find_dissatisfied_agents(scenario)
+        dissatisfied_agents = find_dissatisfied_agents(
+            scenario, 
+            last_moved_agent, 
+            last_from_task, 
+            last_to_task, 
+            scenario['cause_map']
+        )
 
         if not dissatisfied_agents:
             log(f"[GRAPE] NS reached | iter={iteration}", log_path)
@@ -349,29 +370,14 @@ def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100
         from_task = allocation[agent_id]
         allocation[agent_id] = best_task
         
-        # Determine move type and cause
-        move_type = None
-        cause_agent = None
+        # Retrieve cause agent from cause_map
+        cause_agent = scenario['cause_map'].get(agent_id, None)
         
+        # Determine move type based on from_task and best_task
         if from_task == 0:  # Agent was unassigned
             move_type = "pulled"
-            # Find an agent that left the task (this is a simplified approach)
-            # We'll look for agents that were in best_task but are no longer there
-            for other_id in range(num_agents):
-                if other_id != agent_id and allocation[other_id] == best_task:
-                    # This agent is still in the task, so we can't determine cause easily
-                    # For simplicity, we'll use the last agent that was dissatisfied
-                    cause_agent = None
-                    break
-            else:
-                # No other agents in the task, this is a pull move
-                cause_agent = None
         else:  # Agent was already assigned to a task
             move_type = "pushed"
-            # Find an agent that entered the from_task, causing this agent to be pushed out
-            # This is a simplified approach - in reality, we'd need to track the exact sequence
-            cause_agent = None
-            # For now, we'll use a placeholder since tracking exact cause requires more complex logic
         
         # Record the move
         move_tuple = (agent_id, move_type, from_task, best_task, cause_agent)
@@ -382,6 +388,11 @@ def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100
             pushed_moves += 1
         else:  # pulled
             pulled_moves += 1
+        
+        # Update tracking variables for next iteration
+        last_moved_agent = agent_id
+        last_from_task = from_task
+        last_to_task = best_task
         
         iteration += 1
 
