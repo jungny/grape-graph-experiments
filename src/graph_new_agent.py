@@ -269,6 +269,130 @@ def grape_allocation_with_history(scenario, sample_every=1, report_every=100, lo
             log(f"[GRAPE] iter={iteration} | dissatisfied~={dissatisfied_ratio:.1f}% | +{now-last_report_time:.2f}s", log_path)
             last_report_time = now
 
+def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100, log_path=None):
+    allocation = scenario['allocation']
+    num_agents = scenario['num_agents']
+    iteration = 0
+    threshold = num_agents ** 10
+
+    moves = []                    # list of move tuples
+    total_moves = 0
+    pushed_moves = 0
+    pulled_moves = 0
+
+    last_report_time = time.time()
+
+    while True:
+        dissatisfied_agents = find_dissatisfied_agents(scenario)
+
+        if not dissatisfied_agents:
+            log(f"[GRAPE] NS reached | iter={iteration}", log_path)
+            
+            # Check if this is a rare case
+            num_agents_after = scenario['num_agents']
+            is_rare_case = (pulled_moves >= 2 and total_moves >= (num_agents_after / 2))
+            
+            # Always update summary CSV
+            summary_csv_path = os.path.join("logs", "summary.csv")
+            ensure_dir(os.path.dirname(summary_csv_path))
+            
+            # Get number of agents before adding new agent
+            num_agents_before = num_agents_after - 1
+            
+            # Write header if file doesn't exist
+            write_header = not os.path.exists(summary_csv_path) or os.path.getsize(summary_csv_path) == 0
+            with open(summary_csv_path, mode='a', newline='') as file:
+                writer = csv.writer(file)
+                if write_header:
+                    writer.writerow(["seed", "num_agents_before", "num_tasks", "total_moves", "pushed_moves", "pulled_moves"])
+                writer.writerow([seed, num_agents_before, scenario['num_tasks'], total_moves, pushed_moves, pulled_moves])
+            
+            # If rare case, save detailed move files
+            if is_rare_case:
+                detailed_dir = os.path.join("logs", "graph_new_agent", "moves_detailed")
+                ensure_dir(detailed_dir)
+                
+                # Save detailed CSV
+                csv_path = os.path.join(detailed_dir, f"seed_{seed}.csv")
+                with open(csv_path, mode='w', newline='') as file:
+                    writer = csv.writer(file)
+                    writer.writerow(["moved_agent", "move_type", "from_task", "to_task", "cause_agent"])
+                    for move in moves:
+                        writer.writerow(move)
+                
+                # Save human-readable text
+                txt_path = os.path.join(detailed_dir, f"seed_{seed}.txt")
+                with open(txt_path, mode='w', encoding='utf-8') as file:
+                    for move in moves:
+                        moved_agent, move_type, from_task, to_task, cause_agent = move
+                        if move_type == "pushed":
+                            file.write(" " * 40 + f"a{moved_agent} pushed ({from_task}→{to_task}) by a{cause_agent}\n")
+                        else:  # pulled
+                            file.write(f"a{moved_agent} pulled ({from_task}→{to_task}) by a{cause_agent}\n")
+                
+                log(f"[GRAPE] Rare case detected! Detailed moves saved to {detailed_dir}", log_path)
+            
+            return {
+                "allocation": allocation,
+                "iteration": iteration,
+                "NS": True,
+                "moves": moves,
+                "total_moves": total_moves,
+                "pushed_moves": pushed_moves,
+                "pulled_moves": pulled_moves
+            }
+
+        if iteration > threshold:
+            raise RuntimeError(f"Threshold {threshold} 초과: NS 도달 실패 (iteration: {iteration})")
+
+        agent_id, best_task = random.choice(list(dissatisfied_agents))
+        from_task = allocation[agent_id]
+        allocation[agent_id] = best_task
+        
+        # Determine move type and cause
+        move_type = None
+        cause_agent = None
+        
+        if from_task == 0:  # Agent was unassigned
+            move_type = "pulled"
+            # Find an agent that left the task (this is a simplified approach)
+            # We'll look for agents that were in best_task but are no longer there
+            for other_id in range(num_agents):
+                if other_id != agent_id and allocation[other_id] == best_task:
+                    # This agent is still in the task, so we can't determine cause easily
+                    # For simplicity, we'll use the last agent that was dissatisfied
+                    cause_agent = None
+                    break
+            else:
+                # No other agents in the task, this is a pull move
+                cause_agent = None
+        else:  # Agent was already assigned to a task
+            move_type = "pushed"
+            # Find an agent that entered the from_task, causing this agent to be pushed out
+            # This is a simplified approach - in reality, we'd need to track the exact sequence
+            cause_agent = None
+            # For now, we'll use a placeholder since tracking exact cause requires more complex logic
+        
+        # Record the move
+        move_tuple = (agent_id, move_type, from_task, best_task, cause_agent)
+        moves.append(move_tuple)
+        total_moves += 1
+        
+        if move_type == "pushed":
+            pushed_moves += 1
+        else:  # pulled
+            pulled_moves += 1
+        
+        iteration += 1
+
+        if iteration % report_every == 0:
+            now = time.time()
+            dissatisfied_ratio = len(dissatisfied_agents) / num_agents * 100
+            log(f"[GRAPE] iter={iteration} | dissatisfied~={dissatisfied_ratio:.1f}% | "
+                f"moves: {total_moves} (pushed: {pushed_moves}, pulled: {pulled_moves}) | "
+                f"+{now-last_report_time:.2f}s", log_path)
+            last_report_time = now
+
 # ======================================
 # 시각화 관련 함수들 (fc_with_vis.py에서 가져옴)
 # ======================================
