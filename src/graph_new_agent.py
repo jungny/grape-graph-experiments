@@ -314,7 +314,7 @@ def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100
             is_rare_case = (pulled_moves >= 2 and total_moves >= (num_agents_after / 2))
             
             # Always update summary CSV
-            summary_csv_path = os.path.join("logs", "summary.csv")
+            summary_csv_path = os.path.join("logs/graph_new_agent", "summary.csv")
             ensure_dir(os.path.dirname(summary_csv_path))
             
             # Get number of agents before adding new agent
@@ -325,8 +325,8 @@ def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100
             with open(summary_csv_path, mode='a', newline='') as file:
                 writer = csv.writer(file)
                 if write_header:
-                    writer.writerow(["seed", "num_agents_before", "num_tasks", "total_moves", "pushed_moves", "pulled_moves"])
-                writer.writerow([seed, num_agents_before, scenario['num_tasks'], total_moves, pushed_moves, pulled_moves])
+                    writer.writerow(["seed", "num_agents_before", "num_tasks", "density", "total_moves", "pushed_moves", "pulled_moves"])
+                writer.writerow([seed, num_agents_before, scenario['num_tasks'], f"{scenario['density']:.3f}", total_moves, pushed_moves, pulled_moves])
             
             # If rare case, save detailed move files
             if is_rare_case:
@@ -669,7 +669,7 @@ def run_experiment(seed, visualize=False):
     
     # 새로운 에이전트의 초기 할당을 preference에서 가장 높은 순위의 task로 설정
     best_initial_task = new_pref[0][0]
-    scenario['allocation'][new_agent] = best_initial_task
+    scenario['allocation'][new_agent] = 0  # best_initial_task 였는데 그냥 void task 로 임시 할당
     
     log(f"[EXPERIMENT] New agent a{new_agent} added → init task {best_initial_task} | "
         f"new_density={new_density:.3f} | actual_degree={actual_degree}", log_path)
@@ -735,7 +735,7 @@ def run_experiment(seed, visualize=False):
         )
 
         # GIF 생성
-        gif_path = os.path.join(save_dir, f"preference_change_animation_{seed}.gif")
+        gif_path = os.path.join(save_dir, f"new_agent_animation_{seed}.gif")
         generate_gif_from_history(
             scenario_vis,
             new_result['history'],
@@ -745,7 +745,7 @@ def run_experiment(seed, visualize=False):
             log_path=log_path,
             highlights=new_result.get('highlights'),
             edge_mode='sample',
-            edge_alpha=0.06,
+            edge_alpha=0.1,
             highlight_edge_lw=0.5
         )
         
@@ -781,8 +781,13 @@ def write_result_row(csv_path, row):
     with open(csv_path, mode='a', newline='') as file:
         writer = csv.writer(file)
         if write_header:
-            writer.writerow(["seed", "num_agents", "num_tasks", "density", "changed_agent", "initial_iterations", "new_iterations"])
+            writer.writerow([
+                "seed", "num_agents", "num_tasks", "density",
+                "initial_iterations", "new_iterations",
+                "total_moves", "pushed_moves", "pulled_moves"
+            ])
         writer.writerow(row)
+
 
 def main(start_seed, num_seeds=1000, visualize=False):
     print(f"Starting preference change experiment for seeds {start_seed} to {start_seed + num_seeds - 1}")
@@ -823,9 +828,11 @@ def main(start_seed, num_seeds=1000, visualize=False):
                 result['num_agents'], 
                 result['num_tasks'], 
                 result['density'],
-                result['changed_agent'],
                 result['initial_iterations'],
-                result['new_iterations']
+                result['new_iterations'],
+                result['total_moves'],
+                result['pushed_moves'],
+                result['pulled_moves']
             ])
         
         if i % 100 == 0:
