@@ -86,7 +86,7 @@ def generate_random_scenario(seed):
     
     # agent_options = [5]
     # task_options = [3]
-    agent_options = [80, 160, 240, 320] # 240, 320 제외
+    agent_options = [80, 160] # 240, 320 제외
     task_options = [5, 10, 15, 20]
     num_agents = random.choice(agent_options)
     num_tasks = random.choice(task_options)
@@ -135,47 +135,45 @@ def generate_random_scenario(seed):
     }
 
 def find_dissatisfied_agents(scenario):
-    num_agents = scenario['num_agents']
+    num_agents  = scenario['num_agents']
     preferences = scenario['preferences']
-    edges = scenario['edges']
-    allocation = scenario['allocation']
-    connected = scenario['connected']
+    allocation  = scenario['allocation']
+    connected   = scenario['connected']
 
     dissatisfied_agents = set()
-
     for agent_id in range(num_agents):
         current_task = allocation[agent_id]
-        agent_pref = preferences[agent_id]
+        agent_pref   = preferences[agent_id]
 
-        # 연결된 agent들의 task 할당 현황 조사
         task_counts = {}
         for other_id in connected[agent_id]:
             other_task = allocation[other_id]
             task_counts[other_task] = task_counts.get(other_task, 0) + 1
 
-        # 현재 utility 순위와 다른 task utility 순위 비교
         current_key = (current_task, task_counts.get(current_task, 0) + 1)
         try:
             current_rank = agent_pref.index(current_key)
         except ValueError:
-            current_rank = float('inf')  # 현재 task가 선호 리스트에 없음
+            current_rank = float('inf')
 
-        # 다른 task 중 더 선호하는 task가 있으면 dissatisfied
+        best_task = None
+        best_rank = current_rank
+
         for task_id in range(1, scenario['num_tasks'] + 1):
             key = (task_id, task_counts.get(task_id, 0) + 1)
             try:
                 new_rank = agent_pref.index(key)
-                if new_rank < current_rank:
-                    dissatisfied_agents.add((agent_id, task_id))
-                    break  # 하나만 찾으면 되니까 바로 break
+                if new_rank < best_rank:
+                    best_rank = new_rank
+                    best_task = task_id
             except ValueError:
-                continue  # 해당 task_key가 preference에 없으면 무시
+                continue
+
+        if best_task is not None:
+            dissatisfied_agents.add((agent_id, best_task))
+
 
     return dissatisfied_agents
-
-
-
-
 
 def grape_allocation(scenario):
     allocation = scenario['allocation']
@@ -234,7 +232,7 @@ def main(start_seed, num_seeds=1000):
     print("Each seed corresponds to a task allocation scenario.\n"
           "If everything works well, each seed should reach a 🌐 Nash Stable (NS) state.\n")
 
-    csv_path = os.path.join("logs", "seed_info_originalGRAPE.csv")
+    csv_path = os.path.join("logs/csv", "seed_info_originalGRAPE.csv")
 
     # tqdm 진행률 표시줄
     for i in tqdm(range(num_seeds),

@@ -125,15 +125,22 @@ def find_dissatisfied_agents(scenario):
         except ValueError:
             current_rank = float('inf')
 
+        best_task = None
+        best_rank = current_rank
+
         for task_id in range(1, scenario['num_tasks'] + 1):
             key = (task_id, task_counts.get(task_id, 0) + 1)
             try:
                 new_rank = agent_pref.index(key)
-                if new_rank < current_rank:
-                    dissatisfied_agents.add((agent_id, task_id))
-                    break
+                if new_rank < best_rank:
+                    best_rank = new_rank
+                    best_task = task_id
             except ValueError:
                 continue
+
+        if best_task is not None:
+            dissatisfied_agents.add((agent_id, best_task))
+
 
     return dissatisfied_agents
 
@@ -286,7 +293,7 @@ def visualise_agents_only(
     filename="result_vis.png",
     edge_mode='none',
     edge_max=2000,
-    edge_alpha=0.7,
+    edge_alpha=0.06,
     agent_size=4,
     highlight_agent=None,            # <- 추가
     highlight_edge_lw=1.5,           # <- 추가
@@ -317,7 +324,7 @@ def visualise_agents_only(
         for i, j in pairs:
             ax.plot([agent_locations[i,0], agent_locations[j,0]],
                     [agent_locations[i,1], agent_locations[j,1]],
-                    '-', color='gray', linewidth=0.3, alpha=edge_alpha, zorder = 1)
+                    '-', color='#454545', linewidth=0.3, alpha=edge_alpha, zorder = 1)
 
     # 에이전트 점
     for i in range(agent_locations.shape[0]):
@@ -492,7 +499,7 @@ def run_once(seed, sample_every=10, gif_step=1, gif_path=None, edge_mode='none',
         log_path=log_path,
         highlights=result.get('highlights'),
         edge_mode=edge_mode,           # ← 추가
-        edge_alpha=0.7,               # 원하면 조절
+        edge_alpha=0.06,               # 원하면 조절
         highlight_edge_lw=0.5         # 하이라이트 굵기 조절 포인트
     )
 
