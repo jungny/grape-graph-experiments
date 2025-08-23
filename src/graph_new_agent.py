@@ -179,14 +179,14 @@ def find_dissatisfied_agents(scenario, last_moved_agent=None, last_from_task=Non
         if best_task is not None:
             dissatisfied_agents.add((agent_id, best_task))
             
-            # Track cause agents if cause_map is provided
+            # Track cause agents and move types if cause_map is provided
             if cause_map is not None and last_moved_agent is not None:
                 # If the agent's current task == last_to_task: This agent is being pushed by last_moved_agent
                 if current_task == last_to_task:
-                    cause_map[agent_id] = last_moved_agent
+                    cause_map[agent_id] = (last_moved_agent, "pushed")
                 # If the agent's best_task == last_from_task: This agent is being pulled by last_moved_agent
                 elif best_task == last_from_task:
-                    cause_map[agent_id] = last_moved_agent
+                    cause_map[agent_id] = (last_moved_agent, "pulled")
 
     return dissatisfied_agents
 
@@ -370,14 +370,16 @@ def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100
         from_task = allocation[agent_id]
         allocation[agent_id] = best_task
         
-        # Retrieve cause agent from cause_map
-        cause_agent = scenario['cause_map'].get(agent_id, None)
+        # Retrieve cause agent and move type from cause_map
+        cause_info = scenario['cause_map'].get(agent_id, (None, None))
+        cause_agent, move_type = cause_info
         
-        # Determine move type based on from_task and best_task
-        if from_task == 0:  # Agent was unassigned
-            move_type = "pulled"
-        else:  # Agent was already assigned to a task
-            move_type = "pushed"
+        # If move_type is not available from cause_map, fall back to basic classification
+        if move_type is None:
+            if from_task == 0:  # Agent was unassigned
+                move_type = "pulled"
+            else:  # Agent was already assigned to a task
+                move_type = "pushed"
         
         # Record the move
         move_tuple = (agent_id, move_type, from_task, best_task, cause_agent)
