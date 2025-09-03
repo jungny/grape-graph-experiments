@@ -24,9 +24,6 @@ def log(message, log_path=None):
     with open(log_path, mode='a', encoding='utf-8') as f:
         f.write(message + '\n')  # 파일에도 저장
 
-def ensure_dir(path):
-    os.makedirs(path, exist_ok=True)
-
 def generate_preference_relation(degree, num_tasks):
     """
     SPAO 조건 만족하는 preference relation을 무작위로 생성.
@@ -45,11 +42,6 @@ def generate_preference_relation(degree, num_tasks):
         task: [[task, num_participants] for num_participants in range(1, degree + 2)]
         for task in range(1, num_tasks + 1)
     }
-
-    # 2. task 내에서 num_participants 오름차순 정렬 (SPAO 조건용)
-    # 이건 위에서 이미 순서대로 만들었지만 혹시 모르니 정렬함
-    for task in task_sorted:
-        task_sorted[task].sort(key=lambda x: x[1])
 
     # 3. task별 preference들을 deque로 변환 (double-ended queue)
     # 예:
@@ -141,7 +133,7 @@ def generate_random_scenario(seed):
         "degrees": degrees  # for debugging
     }
 
-def find_dissatisfied_agents(scenario):
+def find_dissatisfied_agents(scenario, last_moved_agent=None, last_from_task=None, last_to_task=None, cause_map=None):
     num_agents  = scenario['num_agents']
     preferences = scenario['preferences']
     allocation  = scenario['allocation']
@@ -178,6 +170,15 @@ def find_dissatisfied_agents(scenario):
 
         if best_task is not None:
             dissatisfied_agents.add((agent_id, best_task))
+            
+            # Track cause agents and move types if cause_map is provided
+            if cause_map is not None and last_moved_agent is not None:
+                # If the agent's current task == last_to_task: This agent is being pushed by last_moved_agent
+                if current_task == last_to_task:
+                    cause_map[agent_id] = (last_moved_agent, "pushed")
+                # If the agent's best_task == last_from_task: This agent is being pulled by last_moved_agent
+                elif best_task == last_from_task:
+                    cause_map[agent_id] = (last_moved_agent, "pulled")
 
     return dissatisfied_agents
 
@@ -255,6 +256,24 @@ def grape_allocation_with_history(scenario, sample_every=1, report_every=100, lo
             raise RuntimeError(f"Threshold {threshold} 초과: NS 도달 실패 (iteration: {iteration})")
 
         agent_id, best_task = random.choice(list(dissatisfied_agents))
+        ####################################################################
+
+        # pull_candidates = []
+        # push_candidates = []
+        # for agent_id, best_task in dissatisfied_agents:
+        #     from_task = allocation[agent_id]
+        #     if from_task == 0:
+        #         pull_candidates.append((agent_id, best_task))
+        #     else:
+        #         push_candidates.append((agent_id, best_task))
+        
+        # if pull_candidates:
+        #     agent_id, best_task = random.choice(pull_candidates)
+        # else: 
+        #     agent_id, best_task = random.choice(push_candidates)
+
+        #####################################################################
+
         allocation[agent_id] = best_task
         last_changed_agent = agent_id            # <- 방금 바꾼 에이전트
         iteration += 1
@@ -267,6 +286,144 @@ def grape_allocation_with_history(scenario, sample_every=1, report_every=100, lo
             now = time.time()
             dissatisfied_ratio = len(dissatisfied_agents) / num_agents * 100
             log(f"[GRAPE] iter={iteration} | dissatisfied~={dissatisfied_ratio:.1f}% | +{now-last_report_time:.2f}s", log_path)
+            last_report_time = now
+
+def grape_allocation_with_moves_and_no_random(scenario, seed, sample_every=1, report_every=100, log_path=None):
+    allocation = scenario['allocation']
+    num_agents = scenario['num_agents']
+    iteration = 0
+    threshold = num_agents ** 10
+
+    moves = []                    # list of move tuples
+    total_moves = 0
+    pushed_moves = 0
+    pulled_moves = 0
+
+    # Initialize cause tracking
+    scenario['cause_map'] = {}
+    last_moved_agent = None
+    last_from_task = None
+    last_to_task = None
+
+    last_report_time = time.time()
+
+    while True:
+        dissatisfied_agents = find_dissatisfied_agents(
+            scenario, 
+            last_moved_agent, 
+            last_from_task, 
+            last_to_task, 
+            scenario['cause_map']
+        )
+
+        if not dissatisfied_agents:
+            log(f"[GRAPE] NS reached | iter={iteration}", log_path)
+            
+            # Check if this is a rare case
+            new_agent = scenario.get('num_agents') - 1
+            new_agent_moves = [m for m in moves if m[0]==new_agent]
+            is_rare_case = len(new_agent_moves) >= 3
+            # num_agents_after = scenario['num_agents']
+            # is_rare_case = (pulled_moves >= 2 and total_moves >= (num_agents_after / 2))
+            # is_rare_case = (pulled_moves >= 1) # always true for debug
+
+            ### ☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️
+            
+            # # Always update summary CSV
+            # summary_csv_path = os.path.join("logs/graph_new_agent", "summary.csv")
+            # ensure_dir(os.path.dirname(summary_csv_path))
+            
+            # # Get number of agents before adding new agent
+            # num_agents_before = num_agents_after - 1
+            
+            # # Write header if file doesn't exist
+            # write_header = not os.path.exists(summary_csv_path) or os.path.getsize(summary_csv_path) == 0
+            # with open(summary_csv_path, mode='a', newline='') as file:
+            #     writer = csv.writer(file)
+            #     if write_header:
+            #         writer.writerow(["seed", "num_agents_before", "num_tasks", "density", "total_moves", "pushed_moves", "pulled_moves"])
+            #     writer.writerow([seed, num_agents_before, scenario['num_tasks'], f"{scenario['density']:.3f}", total_moves, pushed_moves, pulled_moves])
+            
+            # If rare case, save detailed move files
+            if is_rare_case:
+                detailed_dir = os.path.join("logs", "graph_new_agent_no_random", "moves_detailed")
+                ensure_dir(detailed_dir)
+                
+                # Save detailed CSV
+                csv_path = os.path.join(detailed_dir, f"seed_{seed}.csv")
+                with open(csv_path, mode='w', newline='') as file:
+                    writer = csv.writer(file)
+                    writer.writerow(["moved_agent", "move_type", "from_task", "to_task", "cause_agent"])
+                    for move in moves:
+                        writer.writerow(move)
+                
+                # Save human-readable text
+                txt_path = os.path.join(detailed_dir, f"seed_{seed}.txt")
+                with open(txt_path, mode='w', encoding='utf-8') as file:
+                    for move in moves:
+                        moved_agent, move_type, from_task, to_task, cause_agent = move
+                        if move_type == "pushed":
+                            file.write(" " * 40 + f"a{moved_agent} pushed ({from_task}→{to_task}) by a{cause_agent}\n")
+                        else:  # pulled
+                            file.write(f"a{moved_agent} pulled ({from_task}→{to_task}) by a{cause_agent}\n")
+                
+                log(f"[GRAPE] Rare case detected! Detailed moves saved to {detailed_dir}", log_path)
+            
+            return {
+                "allocation": allocation,
+                "iteration": iteration,
+                "NS": True,
+                "moves": moves,
+                "total_moves": total_moves,
+                "pushed_moves": pushed_moves,
+                "pulled_moves": pulled_moves
+            }
+
+        if iteration > threshold:
+            raise RuntimeError(f"Threshold {threshold} 초과: NS 도달 실패 (iteration: {iteration})")
+
+        # agent_id, best_task = random.choice(list(dissatisfied_agents))
+        ##############################################################################
+        # 항상 agent 번호가 큰 agent 선택
+        agent_id, best_task = max(dissatisfied_agents, key=lambda x:x[0])
+        ##############################################################################
+        from_task = allocation[agent_id]
+        allocation[agent_id] = best_task
+        
+        # Retrieve cause agent and move type from cause_map
+        cause_info = scenario['cause_map'].get(agent_id, (None, "unknown"))
+        cause_agent, move_type = cause_info
+        
+        # If move_type is not available from cause_map, fall back to basic classification
+        if move_type == "unknown":
+            if from_task == 0:  # Agent was unassigned
+                move_type = "pulled"
+            else:  # Agent was already assigned to a task
+                move_type = "pushed"
+        
+        # Record the move
+        move_tuple = (agent_id, move_type, from_task, best_task, cause_agent)
+        moves.append(move_tuple)
+        total_moves += 1
+        
+        if move_type == "pushed":
+            pushed_moves += 1
+        else:  # pulled
+            pulled_moves += 1
+        
+        # Update tracking variables for next iteration
+        last_moved_agent = agent_id
+        last_from_task = from_task
+        last_to_task = best_task
+        
+        iteration += 1
+
+        if iteration % report_every == 0:
+            now = time.time()
+            dissatisfied_ratio = len(dissatisfied_agents) / num_agents * 100
+            log(f"[GRAPE] iter={iteration} | dissatisfied~={dissatisfied_ratio:.1f}% | "
+                f"moves: {total_moves} (pushed: {pushed_moves}, pulled: {pulled_moves}) | "
+                f"+{now-last_report_time:.2f}s", log_path)
             last_report_time = now
 
 # ======================================
@@ -483,15 +640,15 @@ def run_experiment(seed, visualize=False):
     """
     메인 실험 함수:
     1. 초기 Nash equilibrium까지 GRAPE 실행
-    2. 랜덤 에이전트 선택하여 preference relation 초기화
-    3. 새로운 preference로 다시 GRAPE 실행하여 iteration 수 기록
+    2. 새로운 에이전트 추가 및 초기 할당
+    3. Nash equilibrium 다시 도달 (moves 기록 or history 추적)
     """
     
     if visualize:
         # 시각화 모드: logs/newpr/seed 폴더에 결과 저장
-        save_dir = os.path.join("logs", "newpr", str(seed))
+        save_dir = os.path.join("logs", "graph_new_agent/vis", str(seed))
         ensure_dir(save_dir)
-        log_path = os.path.join(save_dir, "run_log_pr.txt")
+        log_path = os.path.join(save_dir, "run_log.txt")
     else:
         # CSV 기록 모드: logs 폴더에 로그만 저장
         log_path = LOG_PATH
@@ -499,27 +656,43 @@ def run_experiment(seed, visualize=False):
     log(f"[EXPERIMENT] seed={seed}", log_path)
     
     # 1. 초기 시나리오 생성
-    log("[EXPERIMENT] generating initial scenario...", log_path)
     scenario = generate_random_scenario(seed)
-    log(f"[EXPERIMENT] agents={scenario['num_agents']}, tasks={scenario['num_tasks']}, "
-        f"density={scenario['density']:.3f}, edges={len(scenario['edges'])}", log_path)
-
-    # 2. 초기 Nash equilibrium까지 GRAPE 실행
-    log("[EXPERIMENT] running initial GRAPE to reach Nash equilibrium...", log_path)
-    initial_result = grape_allocation(scenario)
+    initial_result = grape_allocation(scenario) #여기에는 with move 없음
     log(f"[EXPERIMENT] Initial Nash equilibrium reached! Iterations: {initial_result['iteration']}", log_path)
 
-    # 3. 랜덤 에이전트 선택하여 preference relation 초기화
-    random_agent = random.choice(list(range(scenario['num_agents'])))
-    old_degree = scenario['degrees'][random_agent]
-    old_preference = scenario['preferences'][random_agent]
+    # 3. 새로운 에이전트 추가
+    num_agents_before = scenario['num_agents']
+    new_agent = num_agents_before
+    scenario['num_agents'] += 1
     
-    # 새로운 preference relation 생성
-    new_preference = generate_preference_relation(old_degree, scenario['num_tasks'])
-    scenario['preferences'][random_agent] = new_preference
+    # 새로운 에이전트를 위한 연결 정보 초기화
+    scenario['connected'][new_agent] = set()
     
-    log(f"[EXPERIMENT] Agent {random_agent} preference changed! "
-        f"Old: {old_preference[:3]}... → New: {new_preference[:3]}...", log_path)
+    # 새로운 에이전트의 연결을 위한 새로운 density 생성 (0% 초과 100% 이하)
+    new_density = random.uniform(1e-9, 1.0)
+    
+    # 새로운 에이전트와 기존 에이전트들 간의 edge 생성
+    for existing_agent in range(num_agents_before):
+        if random.random() < new_density:  # 새로운 density 확률로 연결
+            scenario['connected'][new_agent].add(existing_agent)
+            scenario['connected'][existing_agent].add(new_agent)
+            # edge 순서를 (작은 번호, 큰 번호)로 정렬하여 추가
+            edge_pair = (min(new_agent, existing_agent), max(new_agent, existing_agent))
+            scenario['edges'].add(edge_pair)
+    
+    # 새로운 에이전트의 실제 degree 계산
+    actual_degree = len(scenario['connected'][new_agent])
+    
+    # 새로운 에이전트의 preference relation 생성 (실제 degree 기반)
+    new_pref = generate_preference_relation(actual_degree, scenario['num_tasks'])
+    scenario['preferences'][new_agent] = new_pref
+    
+    # 새로운 에이전트의 초기 할당을 preference에서 가장 높은 순위의 task로 설정
+    best_initial_task = new_pref[0][0]
+    scenario['allocation'][new_agent] = 0  # best_initial_task 였는데 그냥 void task 로 임시 할당
+    
+    log(f"[EXPERIMENT] New agent a{new_agent} added → init task {best_initial_task} | "
+        f"new_density={new_density:.3f} | actual_degree={actual_degree}", log_path)
 
     # 4. 시각화 모드인 경우 환경 설정
     if visualize:
@@ -547,17 +720,28 @@ def run_experiment(seed, visualize=False):
             edge_mode='sample'
         )
 
-    # 5. 새로운 preference로 다시 GRAPE 실행 (히스토리 포함)
-    log("[EXPERIMENT] running GRAPE with new preference to count iterations...", log_path)
-    new_result = grape_allocation_with_history(
-        scenario, 
-        sample_every=1, 
-        report_every=max(100, scenario['num_agents']),
-        log_path=log_path
-    )
+        new_result = grape_allocation_with_history(
+            scenario,
+            sample_every=1,
+            report_every=max(100, scenario['num_agents']),
+            log_path=log_path
+        )
+        new_iterations = new_result['iteration']
+        log(f"[EXPERIMENT] New Nash equilibrium reached! Iterations: {new_iterations}", log_path)
+    else:
+
+        # 5. 새 Nash equilibrium 도달 (moves 기록 포함)
+        log("[EXPERIMENT] running GRAPE with new preference to count iterations...", log_path)
+        new_result = grape_allocation_with_moves_and_no_random(
+            scenario,
+            seed,
+            sample_every=1,
+            report_every=max(100, scenario['num_agents']),
+            log_path=log_path
+        )
     
-    new_iterations = new_result['iteration']
-    log(f"[EXPERIMENT] New Nash equilibrium reached! Iterations: {new_iterations}", log_path)
+        new_iterations = new_result['iteration']
+        log(f"[EXPERIMENT] New Nash equilibrium reached! Iterations: {new_iterations}", log_path)
 
     # 6. 시각화 모드인 경우 결과 시각화 및 GIF 생성
     if visualize:
@@ -571,7 +755,7 @@ def run_experiment(seed, visualize=False):
         )
 
         # GIF 생성
-        gif_path = os.path.join(save_dir, f"preference_change_animation_{seed}.gif")
+        gif_path = os.path.join(save_dir, f"new_agent_animation_{seed}.gif")
         generate_gif_from_history(
             scenario_vis,
             new_result['history'],
@@ -581,7 +765,7 @@ def run_experiment(seed, visualize=False):
             log_path=log_path,
             highlights=new_result.get('highlights'),
             edge_mode='sample',
-            edge_alpha=0.06,
+            edge_alpha=0.1,
             highlight_edge_lw=0.5
         )
         
@@ -590,10 +774,12 @@ def run_experiment(seed, visualize=False):
             "seed": seed,
             "num_agents": scenario['num_agents'],
             "num_tasks": scenario['num_tasks'],
-            "changed_agent": random_agent,
+            "density": scenario['density'],
             "initial_iterations": initial_result['iteration'],
-            "new_iterations": new_iterations,
-            "visualization_dir": save_dir
+            "new_iterations": new_result['iteration'],
+            "total_moves": None,
+            "pushed_moves": None,
+            "pulled_moves": None
         }
     else:
         # CSV 기록 모드
@@ -602,9 +788,11 @@ def run_experiment(seed, visualize=False):
             "num_agents": scenario['num_agents'],
             "num_tasks": scenario['num_tasks'],
             "density": scenario['density'],
-            "changed_agent": random_agent,
             "initial_iterations": initial_result['iteration'],
-            "new_iterations": new_iterations
+            "new_iterations": new_result['iteration'],
+            "total_moves": new_result['total_moves'],
+            "pushed_moves": new_result['pushed_moves'],
+            "pulled_moves": new_result['pulled_moves']
         }
 
 def write_result_row(csv_path, row):
@@ -613,8 +801,13 @@ def write_result_row(csv_path, row):
     with open(csv_path, mode='a', newline='') as file:
         writer = csv.writer(file)
         if write_header:
-            writer.writerow(["seed", "num_agents", "num_tasks", "density", "changed_agent", "initial_iterations", "new_iterations"])
+            writer.writerow([
+                "seed", "num_agents", "num_tasks", "density",
+                "initial_iterations", "new_iterations",
+                "pushed_moves", "pulled_moves"
+            ])
         writer.writerow(row)
+
 
 def main(start_seed, num_seeds=1000, visualize=False):
     print(f"Starting preference change experiment for seeds {start_seed} to {start_seed + num_seeds - 1}")
@@ -627,8 +820,8 @@ def main(start_seed, num_seeds=1000, visualize=False):
         print("🔍 Visualization mode: Results will be saved to logs/newpr/ folders")
         csv_path = None
     else:
-        print("📊 CSV mode: Results will be saved to logs/seed_info.csv")
-        csv_path = os.path.join("logs/csv", "seed_info_pr.csv")
+        # print("📊 CSV mode: Results will be saved to logs/seed_info.csv")
+        csv_path = os.path.join("logs/csv", "summary_new_agent_no_random.csv")
         ensure_dir(os.path.dirname(csv_path))
 
     # tqdm 진행률 표시줄
@@ -655,9 +848,11 @@ def main(start_seed, num_seeds=1000, visualize=False):
                 result['num_agents'], 
                 result['num_tasks'], 
                 result['density'],
-                result['changed_agent'],
                 result['initial_iterations'],
-                result['new_iterations']
+                result['new_iterations'],
+                # result['total_moves'],
+                result['pushed_moves'],
+                result['pulled_moves']
             ])
         
         if i % 100 == 0:

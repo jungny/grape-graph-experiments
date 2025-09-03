@@ -256,6 +256,24 @@ def grape_allocation_with_history(scenario, sample_every=1, report_every=100, lo
             raise RuntimeError(f"Threshold {threshold} 초과: NS 도달 실패 (iteration: {iteration})")
 
         agent_id, best_task = random.choice(list(dissatisfied_agents))
+        ####################################################################
+
+        # pull_candidates = []
+        # push_candidates = []
+        # for agent_id, best_task in dissatisfied_agents:
+        #     from_task = allocation[agent_id]
+        #     if from_task == 0:
+        #         pull_candidates.append((agent_id, best_task))
+        #     else:
+        #         push_candidates.append((agent_id, best_task))
+        
+        # if pull_candidates:
+        #     agent_id, best_task = random.choice(pull_candidates)
+        # else: 
+        #     agent_id, best_task = random.choice(push_candidates)
+
+        #####################################################################
+
         allocation[agent_id] = best_task
         last_changed_agent = agent_id            # <- 방금 바꾼 에이전트
         iteration += 1
@@ -270,7 +288,7 @@ def grape_allocation_with_history(scenario, sample_every=1, report_every=100, lo
             log(f"[GRAPE] iter={iteration} | dissatisfied~={dissatisfied_ratio:.1f}% | +{now-last_report_time:.2f}s", log_path)
             last_report_time = now
 
-def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100, log_path=None):
+def grape_allocation_with_moves_and_new_last(scenario, seed, sample_every=1, report_every=100, log_path=None):
     allocation = scenario['allocation']
     num_agents = scenario['num_agents']
     iteration = 0
@@ -302,12 +320,14 @@ def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100
             log(f"[GRAPE] NS reached | iter={iteration}", log_path)
             
             # Check if this is a rare case
-            # num_agents_after = scenario['num_agents']
             new_agent = scenario.get('num_agents') - 1
             new_agent_moves = [m for m in moves if m[0]==new_agent]
             is_rare_case = len(new_agent_moves) >= 2
+            # num_agents_after = scenario['num_agents']
             # is_rare_case = (pulled_moves >= 2 and total_moves >= (num_agents_after / 2))
-            # is_rare_case = (pulled_moves >= 1)
+            # is_rare_case = (pulled_moves >= 1) # always true for debug
+
+            ### ☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️
             
             # # Always update summary CSV
             # summary_csv_path = os.path.join("logs/graph_new_agent", "summary.csv")
@@ -326,7 +346,7 @@ def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100
             
             # If rare case, save detailed move files
             if is_rare_case:
-                detailed_dir = os.path.join("logs", "graph_new_agent", "moves_detailed")
+                detailed_dir = os.path.join("logs", "graph_new_agent_new_last", "moves_detailed")
                 ensure_dir(detailed_dir)
                 
                 # Save detailed CSV
@@ -362,16 +382,29 @@ def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100
         if iteration > threshold:
             raise RuntimeError(f"Threshold {threshold} 초과: NS 도달 실패 (iteration: {iteration})")
 
-        agent_id, best_task = random.choice(list(dissatisfied_agents))
+        # agent_id, best_task = random.choice(list(dissatisfied_agents))
+        ##############################################################################
+        # new_agent를 마지막으로 미루기
+        new_agent = scenario['num_agents']-1
+
+        candidates = list(dissatisfied_agents)
+
+        non_new = [(agent, task) for (agent, task) in candidates if agent != new_agent]
+
+        if non_new:
+            agent_id, best_task = random.choice(non_new)
+        else:
+            agent_id, best_task = random.choice(candidates)
+        ##############################################################################
         from_task = allocation[agent_id]
         allocation[agent_id] = best_task
         
         # Retrieve cause agent and move type from cause_map
-        cause_info = scenario['cause_map'].get(agent_id, (None, None))
+        cause_info = scenario['cause_map'].get(agent_id, (None, "unknown"))
         cause_agent, move_type = cause_info
         
         # If move_type is not available from cause_map, fall back to basic classification
-        if move_type is None:
+        if move_type == "unknown":
             if from_task == 0:  # Agent was unassigned
                 move_type = "pulled"
             else:  # Agent was already assigned to a task
@@ -633,7 +666,7 @@ def run_experiment(seed, visualize=False):
     
     # 1. 초기 시나리오 생성
     scenario = generate_random_scenario(seed)
-    initial_result = grape_allocation(scenario)
+    initial_result = grape_allocation(scenario) #여기에는 with move 없음
     log(f"[EXPERIMENT] Initial Nash equilibrium reached! Iterations: {initial_result['iteration']}", log_path)
 
     # 3. 새로운 에이전트 추가
@@ -708,7 +741,7 @@ def run_experiment(seed, visualize=False):
 
         # 5. 새 Nash equilibrium 도달 (moves 기록 포함)
         log("[EXPERIMENT] running GRAPE with new preference to count iterations...", log_path)
-        new_result = grape_allocation_with_moves(
+        new_result = grape_allocation_with_moves_and_new_last(
             scenario,
             seed,
             sample_every=1,
@@ -780,7 +813,7 @@ def write_result_row(csv_path, row):
             writer.writerow([
                 "seed", "num_agents", "num_tasks", "density",
                 "initial_iterations", "new_iterations",
-                "total_moves", "pushed_moves", "pulled_moves"
+                "pushed_moves", "pulled_moves"
             ])
         writer.writerow(row)
 
@@ -796,8 +829,8 @@ def main(start_seed, num_seeds=1000, visualize=False):
         print("🔍 Visualization mode: Results will be saved to logs/newpr/ folders")
         csv_path = None
     else:
-        print("📊 CSV mode: Results will be saved to logs/seed_info.csv")
-        csv_path = os.path.join("logs/csv", "summary_new_agent.csv")
+        # print("📊 CSV mode: Results will be saved to logs/seed_info.csv")
+        csv_path = os.path.join("logs/csv", "summary_new_agent_new_last.csv")
         ensure_dir(os.path.dirname(csv_path))
 
     # tqdm 진행률 표시줄

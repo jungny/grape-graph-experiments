@@ -24,9 +24,6 @@ def log(message, log_path=None):
     with open(log_path, mode='a', encoding='utf-8') as f:
         f.write(message + '\n')  # 파일에도 저장
 
-def ensure_dir(path):
-    os.makedirs(path, exist_ok=True)
-
 def generate_preference_relation(degree, num_tasks):
     """
     SPAO 조건 만족하는 preference relation을 무작위로 생성.
@@ -45,11 +42,6 @@ def generate_preference_relation(degree, num_tasks):
         task: [[task, num_participants] for num_participants in range(1, degree + 2)]
         for task in range(1, num_tasks + 1)
     }
-
-    # 2. task 내에서 num_participants 오름차순 정렬 (SPAO 조건용)
-    # 이건 위에서 이미 순서대로 만들었지만 혹시 모르니 정렬함
-    for task in task_sorted:
-        task_sorted[task].sort(key=lambda x: x[1])
 
     # 3. task별 preference들을 deque로 변환 (double-ended queue)
     # 예:
@@ -229,27 +221,7 @@ def grape_allocation(scenario):
             last_report_time = now
 
         # 무작위 dissatisfied agent 선택 → best_task로 할당
-        # agent_id, best_task = random.choice(list(dissatisfied_agents))
-
-        # dissatisfied_agents = {(agent_id, best_task), ...}
-        pull_candidates = []
-        push_candidates = []
-
-        for agent_id, best_task in dissatisfied_agents:
-            from_task = allocation[agent_id]
-            # pull 판단 기준: void task (0) → 다른 task로 가려는 경우
-            if from_task == 0:
-                pull_candidates.append((agent_id, best_task))
-            else:
-                push_candidates.append((agent_id, best_task))
-
-        # 우선 pull move에서 먼저 뽑고, 없으면 push에서 뽑음
-        if pull_candidates:
-            agent_id, best_task = random.choice(pull_candidates)
-        else:
-            agent_id, best_task = random.choice(push_candidates)
-
-
+        agent_id, best_task = random.choice(list(dissatisfied_agents))
         allocation[agent_id] = best_task
         iteration += 1
 
@@ -284,6 +256,24 @@ def grape_allocation_with_history(scenario, sample_every=1, report_every=100, lo
             raise RuntimeError(f"Threshold {threshold} 초과: NS 도달 실패 (iteration: {iteration})")
 
         agent_id, best_task = random.choice(list(dissatisfied_agents))
+        ####################################################################
+
+        # pull_candidates = []
+        # push_candidates = []
+        # for agent_id, best_task in dissatisfied_agents:
+        #     from_task = allocation[agent_id]
+        #     if from_task == 0:
+        #         pull_candidates.append((agent_id, best_task))
+        #     else:
+        #         push_candidates.append((agent_id, best_task))
+        
+        # if pull_candidates:
+        #     agent_id, best_task = random.choice(pull_candidates)
+        # else: 
+        #     agent_id, best_task = random.choice(push_candidates)
+
+        #####################################################################
+
         allocation[agent_id] = best_task
         last_changed_agent = agent_id            # <- 방금 바꾼 에이전트
         iteration += 1
@@ -298,7 +288,7 @@ def grape_allocation_with_history(scenario, sample_every=1, report_every=100, lo
             log(f"[GRAPE] iter={iteration} | dissatisfied~={dissatisfied_ratio:.1f}% | +{now-last_report_time:.2f}s", log_path)
             last_report_time = now
 
-def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100, log_path=None):
+def grape_allocation_with_moves_and_pull_first(scenario, seed, sample_every=1, report_every=100, log_path=None):
     allocation = scenario['allocation']
     num_agents = scenario['num_agents']
     iteration = 0
@@ -330,28 +320,33 @@ def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100
             log(f"[GRAPE] NS reached | iter={iteration}", log_path)
             
             # Check if this is a rare case
-            num_agents_after = scenario['num_agents']
+            new_agent = scenario.get('num_agents') - 1
+            new_agent_moves = [m for m in moves if m[0]==new_agent]
+            is_rare_case = len(new_agent_moves) >= 2
+            # num_agents_after = scenario['num_agents']
             # is_rare_case = (pulled_moves >= 2 and total_moves >= (num_agents_after / 2))
-            is_rare_case = (pulled_moves >= 1)
+            # is_rare_case = (pulled_moves >= 1) # always true for debug
+
+            ### ☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️☑️
             
-            # Always update summary CSV
-            summary_csv_path = os.path.join("logs/graph_new_agent", "summary2.csv")
-            ensure_dir(os.path.dirname(summary_csv_path))
+            # # Always update summary CSV
+            # summary_csv_path = os.path.join("logs/graph_new_agent", "summary.csv")
+            # ensure_dir(os.path.dirname(summary_csv_path))
             
-            # Get number of agents before adding new agent
-            num_agents_before = num_agents_after - 1
+            # # Get number of agents before adding new agent
+            # num_agents_before = num_agents_after - 1
             
-            # Write header if file doesn't exist
-            write_header = not os.path.exists(summary_csv_path) or os.path.getsize(summary_csv_path) == 0
-            with open(summary_csv_path, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                if write_header:
-                    writer.writerow(["seed", "num_agents_before", "num_tasks", "density", "total_moves", "pushed_moves", "pulled_moves"])
-                writer.writerow([seed, num_agents_before, scenario['num_tasks'], f"{scenario['density']:.3f}", total_moves, pushed_moves, pulled_moves])
+            # # Write header if file doesn't exist
+            # write_header = not os.path.exists(summary_csv_path) or os.path.getsize(summary_csv_path) == 0
+            # with open(summary_csv_path, mode='a', newline='') as file:
+            #     writer = csv.writer(file)
+            #     if write_header:
+            #         writer.writerow(["seed", "num_agents_before", "num_tasks", "density", "total_moves", "pushed_moves", "pulled_moves"])
+            #     writer.writerow([seed, num_agents_before, scenario['num_tasks'], f"{scenario['density']:.3f}", total_moves, pushed_moves, pulled_moves])
             
             # If rare case, save detailed move files
             if is_rare_case:
-                detailed_dir = os.path.join("logs", "graph_new_agent", "moves_detailed")
+                detailed_dir = os.path.join("logs", "graph_new_agent_pull_first", "moves_detailed")
                 ensure_dir(detailed_dir)
                 
                 # Save detailed CSV
@@ -387,16 +382,31 @@ def grape_allocation_with_moves(scenario, seed, sample_every=1, report_every=100
         if iteration > threshold:
             raise RuntimeError(f"Threshold {threshold} 초과: NS 도달 실패 (iteration: {iteration})")
 
-        agent_id, best_task = random.choice(list(dissatisfied_agents))
+        # agent_id, best_task = random.choice(list(dissatisfied_agents))
+        ##############################################################################
+        # 먼저 dissatisfied_agents에서 pulled 후보만 고름
+        pulled_candidates = []
+        for agent_id, best_task in dissatisfied_agents:
+            cause_info = scenario['cause_map'].get(agent_id, (None, "unknown"))
+            _, move_type = cause_info
+            if move_type == "pulled":
+                pulled_candidates.append((agent_id, best_task))
+
+        # pulled 후보가 있으면 그중에서 랜덤, 없으면 전체에서 랜덤
+        if pulled_candidates:
+            agent_id, best_task = random.choice(pulled_candidates)
+        else:
+            agent_id, best_task = random.choice(list(dissatisfied_agents))
+        ##############################################################################
         from_task = allocation[agent_id]
         allocation[agent_id] = best_task
         
         # Retrieve cause agent and move type from cause_map
-        cause_info = scenario['cause_map'].get(agent_id, (None, None))
+        cause_info = scenario['cause_map'].get(agent_id, (None, "unknown"))
         cause_agent, move_type = cause_info
         
         # If move_type is not available from cause_map, fall back to basic classification
-        if move_type is None:
+        if move_type == "unknown":
             if from_task == 0:  # Agent was unassigned
                 move_type = "pulled"
             else:  # Agent was already assigned to a task
@@ -658,7 +668,7 @@ def run_experiment(seed, visualize=False):
     
     # 1. 초기 시나리오 생성
     scenario = generate_random_scenario(seed)
-    initial_result = grape_allocation(scenario)
+    initial_result = grape_allocation(scenario) #여기에는 with move 없음
     log(f"[EXPERIMENT] Initial Nash equilibrium reached! Iterations: {initial_result['iteration']}", log_path)
 
     # 3. 새로운 에이전트 추가
@@ -733,7 +743,7 @@ def run_experiment(seed, visualize=False):
 
         # 5. 새 Nash equilibrium 도달 (moves 기록 포함)
         log("[EXPERIMENT] running GRAPE with new preference to count iterations...", log_path)
-        new_result = grape_allocation_with_moves(
+        new_result = grape_allocation_with_moves_and_pull_first(
             scenario,
             seed,
             sample_every=1,
@@ -821,8 +831,8 @@ def main(start_seed, num_seeds=1000, visualize=False):
         print("🔍 Visualization mode: Results will be saved to logs/newpr/ folders")
         csv_path = None
     else:
-        print("📊 CSV mode: Results will be saved to logs/seed_info.csv")
-        csv_path = os.path.join("logs/csv", "seed_info_pr.csv")
+        # print("📊 CSV mode: Results will be saved to logs/seed_info.csv")
+        csv_path = os.path.join("logs/csv", "summary_new_agent_pull_first.csv")
         ensure_dir(os.path.dirname(csv_path))
 
     # tqdm 진행률 표시줄
@@ -851,7 +861,7 @@ def main(start_seed, num_seeds=1000, visualize=False):
                 result['density'],
                 result['initial_iterations'],
                 result['new_iterations'],
-                result['total_moves'],
+                # result['total_moves'],
                 result['pushed_moves'],
                 result['pulled_moves']
             ])
